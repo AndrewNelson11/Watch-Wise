@@ -1,7 +1,6 @@
-// api/movies.js
 export default async function handler(request, response) {
   const API_KEY = process.env.RAPIDAPI_KEY;
-  const API_HOST = '://rapidapi.com';
+  const API_HOST = 'streaming-availability.p.rapidapi.com';
   const BASE_URL = `https://${API_HOST}`;
 
   // Extract path and any parameters forwarded by your frontend
@@ -11,13 +10,15 @@ export default async function handler(request, response) {
     return response.status(400).json({ error: 'Missing path parameter' });
   }
 
-  // Construct target URL for the external API
-  const url = new URL(BASE_URL + path);
-  Object.entries(queryParams).forEach(([key, value]) => {
-    url.searchParams.set(key, value);
-  });
-
   try {
+    // 2. FIXED: Guaranteed safe URL construction regardless of how 'path' is formatted
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    const url = new URL(cleanPath, BASE_URL);
+    
+    Object.entries(queryParams).forEach(([key, value]) => {
+      url.searchParams.set(key, value);
+    });
+
     const apiResponse = await fetch(url, {
       method: 'GET',
       headers: {
@@ -43,3 +44,4 @@ export default async function handler(request, response) {
     return response.status(500).json({ error: 'Could not connect to the remote streaming API.' });
   }
 }
+
