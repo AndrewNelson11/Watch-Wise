@@ -1,8 +1,5 @@
 // script.js
 document.addEventListener('DOMContentLoaded', () => {
-  // ---------- Config ----------
-  const COUNTRY = 'us';
-
   // ---------- Elements ----------
   const tabs = document.querySelectorAll('.tab');
   const panels = document.querySelectorAll('[data-panel]');
@@ -17,10 +14,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const loadMoreBtn = document.getElementById('loadMoreBtn');
 
   // ---------- Helpers ----------
-  async function apiGet(path, params) {
-    // Direct all requests to your internal Vercel Serverless Function proxy
+  async function apiGet(params) {
+    // All requests go to our own serverless function, which holds the TMDB token.
     const url = new URL('/api/movies', window.location.origin);
-    url.searchParams.set('path', path);
     Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
 
     let response;
@@ -34,7 +30,7 @@ document.addEventListener('DOMContentLoaded', () => {
       throw new Error('Too many requests right now. Wait a minute and try again.');
     }
     if (response.status === 401 || response.status === 403) {
-      throw new Error('The API key was rejected. Check your configuration values.');
+      throw new Error('The movie service rejected the server token. Check the TMDB_ACCESS_TOKEN setting.');
     }
     if (!response.ok) {
       throw new Error('The movie service had a problem. Try again in a moment.');
@@ -63,64 +59,75 @@ document.addEventListener('DOMContentLoaded', () => {
     return m ? `${h}h ${m}m` : `${h}h`;
   }
 
-  function showKey(show) {
-    return show.id || show.imdbId || show.tmdbId || `${show.title}-${show.releaseYear || show.firstAirYear || ''}`;
-  }
+  const TYPE_LABEL = { free: 'Free', ads: 'Free with ads', addon: 'Add-on', rent: 'Rent', buy: 'Buy' };
 
-  function bestImage(imageObj) {
-    if (!imageObj) return '';
-    const order = ['w240', 'w360', 'w480', 'w600', 'w720', 'w1080'];
-    for (const size of order) {
-      if (safeUrl(imageObj[size])) return imageObj[size];
-    }
-    return '';
-  }
+  const showsById = new Map(); // remembered so a card can fall back to general links
+  const linkCache = new Map(); // direct links already fetched this visit
 
-  function posterFor(show) {
-    const set = show.imageSet;
-    if (!set) return '';
-    return bestImage(set.verticalPoster) || bestImage(set.horizontalPoster) || '';
-  }
-
-  const TYPE_ORDER = { subscription: 0, free: 1, addon: 2, rent: 3, buy: 4 };
-  const TYPE_LABEL = { free: 'Free', addon: 'Add-on', rent: 'Rent', buy: 'Buy' };
-
-  function streamingChips(show) {
-    const options = Array.isArray(show.streamingOptions?.[COUNTRY]) ? show.streamingOptions[COUNTRY] : [];
-    const sorted = [...options].sort((a, b) => (TYPE_ORDER[a.type] ?? 9) - (TYPE_ORDER[b.type] ?? 9));
-    const seen = new Set();
-    let html = '';
-
-    sorted.forEach(opt => {
-      const name = typeof opt.service === 'string'
-        ? opt.service.charAt(0).toUpperCase() + opt.service.slice(1)
-        : opt.service?.name || 'Unknown';
-      const link = safeUrl(opt.link);
-      if (!link || seen.has(name)) return;
-      seen.add(name);
+  function chipsHtml(options, fallbackLink) {
+    const html = options.map(opt => {
+      const link = safeUrl(opt.link) || safeUrl(fallbackLink);
+      if (!link) return '';
       const label = TYPE_LABEL[opt.type];
-      html += `<a class="chip" href="${escapeHtml(link)}" target="_blank" rel="noopener">${escapeHtml(name)}${label ? ` <small>${label}</small>` : ''}</a>`;
-    });
+      return `<a class="chip" href="${escapeHtml(link)}" target="_blank" rel="noopener">${escapeHtml(opt.name)}${label ? ` <small>${label}</small>` : ''}</a>`;
+    }).join('');
+    return html ? `<div class="chips">${html}</div>` : '';
+  }
 
-    return html
-      ? `<div class="chips">${html}</div>`
-      : '<p class="not-streaming">Not streaming in the US right now.</p>';
+  const NOT_STREAMING = '<p class="not-streaming">Not streaming in the US right now.</p>';
+
+  // TMDB tells us up front whether a title streams anywhere in the US. Direct links into each
+  // service come from the Streaming Availability API and are fetched when the button is clicked,
+  // which keeps us well inside that API's daily request limit.
+  function whereToWatchHtml(show) {
+    const options = Array.isArray(show.streaming) ? show.streaming : [];
+    if (options.length === 0) return NOT_STREAMING;
+    if (show.imdbId) {
+      return `<button type="button" class="btn-links" data-show-id="${escapeHtml(show.id)}">Show streaming links</button>`;
+    }
+    return chipsHtml(options, show.watchLink) || NOT_STREAMING;
+  }
+
+  async function loadLinks(btn) {
+    const show = showsById.get(btn.dataset.showId);
+    const body = btn.closest('.where-body');
+    if (!show || !body) return;
+
+    btn.disabled = true;
+    btn.textContent = 'Loading…';
+
+    let html = linkCache.get(show.imdbId);
+    if (!html) {
+      try {
+        const data = await apiGet({ action: 'streaming', imdb: show.imdbId });
+        html = chipsHtml(Array.isArray(data.streaming) ? data.streaming : [], '');
+        if (html) linkCache.set(show.imdbId, html);
+      } catch {
+        html = '';
+      }
+      if (!html) {
+        html = chipsHtml(show.streaming, show.watchLink) +
+          '<p class="links-note">Direct links aren\'t available for this title right now, so these open a general where-to-watch page.</p>';
+      }
+    }
+    body.innerHTML = html;
   }
 
   function cardHtml(show) {
-    const title = show.title || show.originalTitle || 'Untitled';
-    const year = show.releaseYear || show.firstAirYear || '';
-    const rating = typeof show.rating === 'number' ? `★ ${(show.rating / 10).toFixed(1)}` : 'No rating';
-    const isSeries = show.showType === 'series';
+    showsById.set(show.id, show);
+    const title = show.title || 'Untitled';
+    const year = show.year || '';
+    const rating = typeof show.rating === 'number' ? `★ ${show.rating.toFixed(1)}` : 'No rating';
+    const isSeries = show.mediaType === 'tv';
 
     let length = '';
-    if (isSeries && show.seasonCount) {
-      length = `${show.seasonCount} season${show.seasonCount === 1 ? '' : 's'}`;
+    if (isSeries && show.seasons) {
+      length = `${show.seasons} season${show.seasons === 1 ? '' : 's'}`;
     } else {
       length = formatRuntime(show.runtime);
     }
 
-    const poster = posterFor(show);
+    const poster = safeUrl(show.poster);
     const posterHtml = poster
       ? `<img src="${escapeHtml(poster)}" alt="Poster for ${escapeHtml(title)}" loading="lazy" onerror="this.outerHTML='<div class=&quot;poster-fallback&quot;>No poster</div>'" />`
       : '<div class="poster-fallback">No poster</div>';
@@ -138,7 +145,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <p class="overview" title="Click to read more">${escapeHtml(show.overview || 'No description available.')}</p>
           <div class="where">
             <span class="where-label">Where to watch</span>
-            ${streamingChips(show)}
+            <div class="where-body">${whereToWatchHtml(show)}</div>
           </div>
         </div>
       </article>`;
@@ -155,6 +162,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   document.addEventListener('click', e => {
+    const linksBtn = e.target.closest('.btn-links');
+    if (linksBtn) {
+      loadLinks(linksBtn);
+      return;
+    }
     const overview = e.target.closest('.overview');
     if (overview) overview.classList.toggle('expanded');
   });
@@ -192,15 +204,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     showLoading(titleResults);
     try {
-      const params = {
-        title: query,
-        country: COUNTRY,
-        series_granularity: 'show',
-        output_language: 'en'
-      };
-      if (titleType.value !== 'both') params.show_type = titleType.value;
-
-      const data = await apiGet('/shows/search/title', params);
+      const data = await apiGet({ action: 'search', query, type: titleType.value });
       if (!Array.isArray(data) || data.length === 0) {
         showMessage(titleResults, `No results for "${query}"`, 'Check the spelling, or switch the type to "Movies and shows" to search both.');
         return;
@@ -219,24 +223,26 @@ document.addEventListener('DOMContentLoaded', () => {
     genre: '',
     type: '',
     label: '',
-    cursor: null,
+    page: 0,
     hasMore: false,
     seen: new Set(),
     count: 0
   };
 
+  // Movie and show genres have different ids in TMDB, so reload the list when the type changes.
   async function loadGenres() {
+    genreSelect.innerHTML = '<option value="">Choose a genre</option>';
     let genres;
     try {
-      genres = await apiGet('/genres', { output_language: 'en' });
+      genres = await apiGet({ action: 'genres', type: genreType.value });
     } catch {
       genreSelect.innerHTML = '<option value="">Genres unavailable</option>';
       return;
     }
     genres.forEach(genre => {
       const option = document.createElement('option');
-      option.value = genre.id || genre.name || genre;
-      option.textContent = genre.name || genre.id || genre;
+      option.value = genre.id;
+      option.textContent = genre.name;
       genreSelect.appendChild(option);
     });
   }
@@ -246,7 +252,7 @@ document.addEventListener('DOMContentLoaded', () => {
       genreState.genre = genreSelect.value;
       genreState.type = genreType.value;
       genreState.label = genreSelect.options[genreSelect.selectedIndex].textContent;
-      genreState.cursor = null;
+      genreState.page = 0;
       genreState.hasMore = false;
       genreState.seen = new Set();
       genreState.count = 0;
@@ -258,30 +264,24 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     try {
-      const params = {
-        country: COUNTRY,
-        show_type: genreState.type,
-        genres: genreState.genre,
-        order_by: 'popularity_1year',
-        order_direction: 'desc',
-        output_language: 'en'
-      };
-      if (genreState.cursor) params.cursor = genreState.cursor;
+      const data = await apiGet({
+        action: 'browse',
+        type: genreState.type,
+        genre: genreState.genre,
+        page: genreState.page + 1
+      });
+      genreState.page = data.page || genreState.page + 1;
+      genreState.hasMore = Boolean(data.hasMore);
 
-      const data = await apiGet('/shows/search/filters', params);
-      genreState.cursor = data.nextCursor || null;
-      genreState.hasMore = Boolean(data.hasMore && data.nextCursor);
-
-      const shows = Array.isArray(data.shows) ? data.shows : Array.isArray(data) ? data : [];
+      const shows = Array.isArray(data.results) ? data.results : [];
       const newShows = shows.filter(show => {
-        const key = showKey(show);
-        if (genreState.seen.has(key)) return false;
-        genreState.seen.add(key);
+        if (genreState.seen.has(show.id)) return false;
+        genreState.seen.add(show.id);
         return true;
       });
       genreState.count += newShows.length;
 
-      const summary = `<p class="results-summary">${genreState.count} result${genreState.count === 1 ? '' : 's'} for ${escapeHtml(genreState.label)}</p>`;
+      const summary = `<p class="results-summary">${genreState.count} result${genreState.count === 1 ? '' : 's'} for ${escapeHtml(genreState.label)}, most popular first</p>`;
       const grid = newShows.map(cardHtml).join('');
       if (reset) {
         genreResults.innerHTML = summary + (grid ? `<div class="grid">${grid}</div>` : '<p class="message">No results found.</p>');
@@ -291,11 +291,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       loadMoreBtn.hidden = !genreState.hasMore;
     } catch (err) {
-      if (reset) {
-        showMessage(genreResults, 'Something went wrong', err.message, true);
-      } else {
-        showMessage(genreResults, 'Something went wrong', err.message, true);
-      }
+      showMessage(genreResults, 'Something went wrong', err.message, true);
     } finally {
       loadMoreBtn.disabled = false;
       loadMoreBtn.textContent = 'Load more';
@@ -307,6 +303,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadGenreResults(true);
   });
 
+  genreType.addEventListener('change', loadGenres);
   loadMoreBtn.addEventListener('click', () => loadGenreResults(false));
   loadGenres();
 });

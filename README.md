@@ -2,28 +2,33 @@
 
 Find what to watch, and where to stream it. Search any movie or show by title, or browse by genre, and see each title's year, rating, runtime, description and the US streaming services that carry it.
 
-**Live demo:** [your-site.vercel.app](https://your-site.vercel.app)
+**Live demo:** https://watch-wise-gamma.vercel.app/
 
 ![Watchwise screenshot](screenshot.png)
 
 ## Features
 - Search movies and shows by title
-- Browse by genre, sorted by popularity, with Load more pagination
-- Streaming links for each result (subscription and free options first, rent/buy last)
+- Browse by genre, most popular first, with Load more pagination
+- Direct links into each streaming service for every way to watch (subscription and free first, rent/buy last)
 - Responsive layout, keyboard-accessible tabs, loading and error states
 
 ## Tech stack
 - HTML, CSS and vanilla JavaScript (no framework, no build step)
 - Vercel serverless function (Node.js) as an API proxy
-- [Streaming Availability API](https://rapidapi.com/movie-of-the-night-movie-of-the-night-default/api/streaming-availability/details) via RapidAPI
+- [TMDB API](https://www.themoviedb.org/documentation/api) for search, popularity ranking, details and US availability
+- [Streaming Availability API](https://rapidapi.com/movie-of-the-night-movie-of-the-night-default/api/streaming-availability/details) (RapidAPI) for direct deep links into each service
 - Deployed on Vercel from GitHub
 
 ## How it works
-The browser never talks to the streaming API directly. `script.js` calls `/api/movies`, a serverless function that adds the RapidAPI key from an environment variable and forwards the request. This keeps the key out of front-end code and out of the repo, and lets the function return clear error responses for rate limits and auth problems.
+The browser never talks to the external APIs directly. `script.js` calls `/api/movies`, a serverless function that adds the API credentials from environment variables, queries TMDB and returns clean, ready-to-render results. This keeps the keys out of front-end code and out of the repo.
+
+Two APIs split the work: TMDB handles search and popularity, and the Streaming Availability API supplies direct links into Netflix, Max and so on. Direct links are fetched when a user clicks "Show streaming links" on a card, which keeps the app inside the API's free daily request limit, and responses are cached at the edge. If the direct-link lookup fails or the limit is hit, the card falls back to TMDB's general where-to-watch link.
 
 Other details worth noting:
+- Title search ranks exact matches first, then sorts by TMDB's popularity score
+- Genre browse uses TMDB's discover endpoint sorted by popularity, with a minimum vote count to filter out obscure titles
+- The function fetches details and streaming providers for each result in parallel, so the browser makes a single request
 - Results are HTML-escaped and links are validated before rendering
-- The genre list is loaded from the API; results are de-duplicated across pages and ordered by popularity
 - Handles rate limiting (429), rejected keys, empty results and network failures with friendly messages
 
 ## Project structure
@@ -40,14 +45,14 @@ The app needs the serverless function, so opening `index.html` directly won't fe
 
 ```
 npm i -g vercel
-echo "RAPIDAPI_KEY=your_key_here" > .env
+printf "TMDB_ACCESS_TOKEN=your_token_here\nRAPIDAPI_KEY=your_key_here\n" > .env
 vercel dev
 ```
 
 ## Deploy
 1. Push the repo to GitHub.
 2. Import it in Vercel with the framework preset set to Other and no build command.
-3. Add `RAPIDAPI_KEY` under Project Settings > Environment Variables, then redeploy.
+3. Add `TMDB_ACCESS_TOKEN` (your TMDB API Read Access Token) and `RAPIDAPI_KEY` (your RapidAPI key) under Project Settings > Environment Variables, then redeploy.
 
 ## Attribution
-Streaming data from the Streaming Availability API. See their [terms](https://rapidapi.com/movie-of-the-night-movie-of-the-night-default/api/streaming-availability/details) for attribution requirements.
+This product uses the TMDB API but is not endorsed or certified by TMDB. Streaming availability data is provided by JustWatch, with direct links from the Streaming Availability API.
