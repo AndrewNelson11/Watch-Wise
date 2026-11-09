@@ -268,6 +268,8 @@ document.addEventListener('DOMContentLoaded', () => {
         country: COUNTRY,
         show_type: genreState.type,
         genres: genreState.genre,
+        order_by: 'popularity_1year',
+        order_direction: 'desc',
         output_language: 'en'
       };
       if (genreState.cursor) params.cursor = genreState.cursor;
