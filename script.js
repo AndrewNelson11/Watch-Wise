@@ -228,16 +228,10 @@ document.addEventListener('DOMContentLoaded', () => {
   async function loadGenres() {
     let genres;
     try {
-      const res = await fetch('genres.json');
-      if (!res.ok) throw new Error('missing');
-      genres = await res.json();
+      genres = await apiGet('/genres', { output_language: 'en' });
     } catch {
-      try {
-        genres = await apiGet('/genres', { output_language: 'en' });
-      } catch {
-        genreSelect.innerHTML = '<option value="">Genres unavailable</option>';
-        return;
-      }
+      genreSelect.innerHTML = '<option value="">Genres unavailable</option>';
+      return;
     }
     genres.forEach(genre => {
       const option = document.createElement('option');
