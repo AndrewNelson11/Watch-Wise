@@ -398,33 +398,6 @@ a {
   font-weight: 400;
 }
 
-.btn-links {
-  padding: 6px 14px;
-  border: 1px solid var(--accent);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--accent);
-  font: 600 0.84rem var(--font-body);
-  cursor: pointer;
-  transition: background-color 0.15s, color 0.15s;
-}
-
-.btn-links:hover:not(:disabled) {
-  background: var(--accent);
-  color: var(--accent-ink);
-}
-
-.btn-links:disabled {
-  opacity: 0.6;
-  cursor: wait;
-}
-
-.links-note {
-  margin: 8px 0 0;
-  color: var(--muted);
-  font-size: 0.8rem;
-}
-
 .not-streaming {
   margin: 0;
   color: var(--muted);
@@ -485,6 +458,24 @@ a {
 }
 
 /* Footer */
+
+.footer-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+}
+
+.tmdb-link {
+  flex: none;
+  display: inline-flex;
+}
+
+.tmdb-logo {
+  display: block;
+  height: 16px;
+  width: auto;
+}
 
 .site-footer {
   margin-top: 56px;

@@ -26,14 +26,15 @@ document.addEventListener('DOMContentLoaded', () => {
       throw new Error('Could not reach the server. Check your internet connection and try again.');
     }
 
-    if (response.status === 429) {
-      throw new Error('Too many requests right now. Wait a minute and try again.');
-    }
-    if (response.status === 401 || response.status === 403) {
-      throw new Error('The movie service rejected the server token. Check the TMDB_ACCESS_TOKEN setting.');
-    }
     if (!response.ok) {
-      throw new Error('The movie service had a problem. Try again in a moment.');
+      let message = 'The movie service had a problem. Try again in a moment.';
+      if (response.status === 429) message = 'Too many requests right now. Wait a minute and try again.';
+      if (response.status === 401 || response.status === 403) {
+        message = 'The movie service rejected the server token. Check the TMDB_ACCESS_TOKEN setting.';
+      }
+      const err = new Error(message);
+      err.status = response.status;
+      throw err;
     }
     return response.json();
   }
@@ -61,8 +62,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const TYPE_LABEL = { free: 'Free', ads: 'Free with ads', addon: 'Add-on', rent: 'Rent', buy: 'Buy' };
 
-  const showsById = new Map(); // remembered so a card can fall back to general links
-  const linkCache = new Map(); // direct links already fetched this visit
+  const showsById = new Map(); // every card's data, so its streaming chips can be upgraded later
+  const linkCache = new Map(); // direct-link chips already fetched this visit
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
   function chipsHtml(options, fallbackLink) {
     const html = options.map(opt => {
@@ -76,41 +78,73 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const NOT_STREAMING = '<p class="not-streaming">Not streaming in the US right now.</p>';
 
-  // TMDB tells us up front whether a title streams anywhere in the US. Direct links into each
-  // service come from the Streaming Availability API and are fetched when the button is clicked,
-  // which keeps us well inside that API's daily request limit.
+  // Cards first show TMDB's list of services, which opens a general where-to-watch page. A moment
+  // later each card is upgraded in the background with links straight to the title on each service.
   function whereToWatchHtml(show) {
     const options = Array.isArray(show.streaming) ? show.streaming : [];
-    if (options.length === 0) return NOT_STREAMING;
-    if (show.imdbId) {
-      return `<button type="button" class="btn-links" data-show-id="${escapeHtml(show.id)}">Show streaming links</button>`;
-    }
     return chipsHtml(options, show.watchLink) || NOT_STREAMING;
   }
 
-  async function loadLinks(btn) {
-    const show = showsById.get(btn.dataset.showId);
-    const body = btn.closest('.where-body');
-    if (!show || !body) return;
+  // ---------- Direct links (loaded automatically) ----------
+  const MAX_WORKERS = 3;
+  const upgradeQueue = [];
+  let activeWorkers = 0;
+  let directLinksOff = false; // set when the daily limit is hit or the lookup isn't configured
 
-    btn.disabled = true;
-    btn.textContent = 'Loading…';
+  async function requestDirectLinks(imdbId) {
+    const data = await apiGet({ action: 'streaming', imdb: imdbId });
+    return chipsHtml(Array.isArray(data.streaming) ? data.streaming : [], '');
+  }
 
+  async function upgradeCard(item) {
+    const { el, show } = item;
     let html = linkCache.get(show.imdbId);
+
     if (!html) {
       try {
-        const data = await apiGet({ action: 'streaming', imdb: show.imdbId });
-        html = chipsHtml(Array.isArray(data.streaming) ? data.streaming : [], '');
-        if (html) linkCache.set(show.imdbId, html);
-      } catch {
-        html = '';
+        html = await requestDirectLinks(show.imdbId);
+      } catch (err) {
+        if (err.status === 429) {
+          await sleep(1200); // might only be a per-second limit, so try once more
+          try {
+            html = await requestDirectLinks(show.imdbId);
+          } catch (retryErr) {
+            if (retryErr.status === 429 || retryErr.status === 503) {
+              directLinksOff = true;
+              upgradeQueue.length = 0;
+            }
+          }
+        } else if (err.status === 503) {
+          directLinksOff = true;
+          upgradeQueue.length = 0;
+        }
       }
-      if (!html) {
-        html = chipsHtml(show.streaming, show.watchLink) +
-          '<p class="links-note">Direct links aren\'t available for this title right now, so these open a general where-to-watch page.</p>';
-      }
+      if (html) linkCache.set(show.imdbId, html);
     }
-    body.innerHTML = html;
+
+    // If anything went wrong the general links stay in place, so the card is never empty.
+    if (html && el.isConnected) el.innerHTML = html;
+  }
+
+  async function runWorker() {
+    while (upgradeQueue.length && !directLinksOff) {
+      await upgradeCard(upgradeQueue.shift());
+    }
+    activeWorkers -= 1;
+  }
+
+  function queueDirectLinks(root) {
+    if (directLinksOff) return;
+    root.querySelectorAll('.where-body[data-show-id]:not([data-queued])').forEach(el => {
+      el.dataset.queued = '1';
+      const show = showsById.get(el.dataset.showId);
+      if (!show || !show.imdbId || !Array.isArray(show.streaming) || show.streaming.length === 0) return;
+      upgradeQueue.push({ el, show });
+    });
+    while (activeWorkers < MAX_WORKERS && upgradeQueue.length) {
+      activeWorkers += 1;
+      runWorker();
+    }
   }
 
   function cardHtml(show) {
@@ -145,7 +179,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <p class="overview" title="Click to read more">${escapeHtml(show.overview || 'No description available.')}</p>
           <div class="where">
             <span class="where-label">Where to watch</span>
-            <div class="where-body">${whereToWatchHtml(show)}</div>
+            <div class="where-body" data-show-id="${escapeHtml(show.id)}">${whereToWatchHtml(show)}</div>
           </div>
         </div>
       </article>`;
@@ -162,11 +196,6 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   document.addEventListener('click', e => {
-    const linksBtn = e.target.closest('.btn-links');
-    if (linksBtn) {
-      loadLinks(linksBtn);
-      return;
-    }
     const overview = e.target.closest('.overview');
     if (overview) overview.classList.toggle('expanded');
   });
@@ -213,6 +242,7 @@ document.addEventListener('DOMContentLoaded', () => {
       titleResults.innerHTML =
         `<p class="results-summary">${data.length} result${data.length === 1 ? '' : 's'} for "${escapeHtml(query)}"</p>` +
         `<div class="grid">${data.map(cardHtml).join('')}</div>`;
+      queueDirectLinks(titleResults);
     } catch (err) {
       showMessage(titleResults, 'Something went wrong', err.message, true);
     }
@@ -281,7 +311,7 @@ document.addEventListener('DOMContentLoaded', () => {
       });
       genreState.count += newShows.length;
 
-      const summary = `<p class="results-summary">${genreState.count} result${genreState.count === 1 ? '' : 's'} for ${escapeHtml(genreState.label)}, most popular first</p>`;
+      const summary = `<p class="results-summary">${genreState.count} result${genreState.count === 1 ? '' : 's'} for ${escapeHtml(genreState.label)}, trending and well known</p>`;
       const grid = newShows.map(cardHtml).join('');
       if (reset) {
         genreResults.innerHTML = summary + (grid ? `<div class="grid">${grid}</div>` : '<p class="message">No results found.</p>');
@@ -290,6 +320,7 @@ document.addEventListener('DOMContentLoaded', () => {
         genreResults.querySelector('.grid').insertAdjacentHTML('beforeend', grid);
       }
       loadMoreBtn.hidden = !genreState.hasMore;
+      queueDirectLinks(genreResults);
     } catch (err) {
       showMessage(genreResults, 'Something went wrong', err.message, true);
     } finally {

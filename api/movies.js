@@ -8,6 +8,8 @@ const COUNTRY = 'US';
 const SEARCH_LIMIT = 12;
 
 const SA_HOST = 'streaming-availability.p.rapidapi.com';
+const LINK_CACHE_MS = 24 * 60 * 60 * 1000;
+const linkCache = new Map(); // imdbId -> { at, streaming } (reused while the function instance stays warm)
 const SA_TYPE_ORDER = { subscription: 0, free: 1, addon: 2, rent: 3, buy: 4 };
 
 async function tmdb(path, params = {}) {
@@ -29,6 +31,9 @@ async function tmdb(path, params = {}) {
 
 // Direct streaming links for one title (looked up by IMDb id), best options first.
 async function streamingLinks(imdbId) {
+  const cached = linkCache.get(imdbId);
+  if (cached && Date.now() - cached.at < LINK_CACHE_MS) return cached.streaming;
+
   const url = new URL(`https://${SA_HOST}/shows/${imdbId}`);
   url.searchParams.set('country', 'us');
   url.searchParams.set('output_language', 'en');
@@ -51,6 +56,8 @@ async function streamingLinks(imdbId) {
     seen.add(name);
     streaming.push({ name, type: opt.type, link: opt.link });
   });
+  if (linkCache.size > 500) linkCache.clear();
+  linkCache.set(imdbId, { at: Date.now(), streaming });
   return streaming;
 }
 
@@ -92,21 +99,21 @@ function normalize(d, mediaType) {
   };
 }
 
+async function detailsFor(item) {
+  try {
+    const d = await tmdb(`/${item.mediaType}/${item.id}`, {
+      append_to_response: 'watch/providers,external_ids',
+      language: 'en-US'
+    });
+    return normalize(d, item.mediaType);
+  } catch {
+    return null;
+  }
+}
+
 async function withDetails(items) {
-  const settled = await Promise.all(
-    items.map(async item => {
-      try {
-        const d = await tmdb(`/${item.mediaType}/${item.id}`, {
-          append_to_response: 'watch/providers,external_ids',
-          language: 'en-US'
-        });
-        return normalize(d, item.mediaType);
-      } catch {
-        return null;
-      }
-    })
-  );
-  return settled.filter(Boolean);
+  const shows = await Promise.all(items.map(detailsFor));
+  return shows.filter(Boolean);
 }
 
 function normalizeText(value) {
@@ -120,19 +127,17 @@ function normalizeText(value) {
     .replace(/^(the|a|an) /, '');
 }
 
-// Exact title match first, then titles starting with the search, then everything else by popularity.
-function rank(items, query) {
+// Google-style ranking: well-known titles first. Fame comes from how many people have voted on a
+// title (stable and hard to game), nudged by TMDB's popularity score. An exact or starting-with
+// title match gets a boost so "Batman" still puts Batman first, but an obscure title with the
+// same name can't beat a famous one.
+function relevanceScore(item, query) {
   const q = normalizeText(query);
-  const tier = item => {
-    const t = normalizeText(item.title || item.name);
-    if (t === q) return 0;
-    if (t.startsWith(q)) return 1;
-    return 2;
-  };
-  return items
-    .map((item, index) => ({ item, index, tier: tier(item) }))
-    .sort((a, b) => a.tier - b.tier || (b.item.popularity || 0) - (a.item.popularity || 0) || a.index - b.index)
-    .map(x => x.item);
+  const t = normalizeText(item.title || item.name);
+  const match = t === q ? 15 : t.startsWith(q) ? 8 : 0;
+  const fame = Math.log10((item.vote_count || 0) + 1) * 10;
+  const trend = Math.log10((item.popularity || 0) + 1) * 3;
+  return match + fame + trend;
 }
 
 export default async function handler(request, response) {
@@ -174,8 +179,23 @@ export default async function handler(request, response) {
         items = (data.results || []).map(r => ({ ...r, mediaType }));
       }
 
-      const top = rank(items, q).slice(0, SEARCH_LIMIT);
-      const shows = await withDetails(top);
+      // Score every match, look up details for the 20 best candidates, then give titles that can
+      // actually be streamed in the US a bonus before picking the final list.
+      const candidates = items
+        .map(item => ({ item, score: relevanceScore(item, q) }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 20);
+      const detailed = await Promise.all(
+        candidates.map(async ({ item, score }) => {
+          const show = await detailsFor(item);
+          return show ? { show, score: score + (show.streaming.length ? 8 : 0) } : null;
+        })
+      );
+      const shows = detailed
+        .filter(Boolean)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, SEARCH_LIMIT)
+        .map(x => x.show);
       response.setHeader('Cache-Control', 's-maxage=600, stale-while-revalidate');
       return response.status(200).json(shows);
     }
@@ -184,10 +204,16 @@ export default async function handler(request, response) {
       if (!/^\d+$/.test(String(genre))) return response.status(400).json({ error: 'Missing genre' });
       const pageNum = Math.max(1, Math.min(500, parseInt(page, 10) || 1));
 
+      // Trending and well known: sort by TMDB's popularity (what people are watching now) but only
+      // include titles with plenty of votes, so obscure titles can't sneak in. Only titles with a US
+      // way to watch (subscription, free, ads, rent or buy) are listed. To lean more trending, lower
+      // the vote minimums; to lean more well known, raise them.
       const data = await tmdb(`/discover/${mediaType}`, {
         with_genres: genre,
         sort_by: 'popularity.desc',
-        'vote_count.gte': mediaType === 'movie' ? '200' : '100',
+        'vote_count.gte': mediaType === 'movie' ? '500' : '250',
+        watch_region: COUNTRY,
+        with_watch_monetization_types: 'flatrate|free|ads|rent|buy',
         include_adult: 'false',
         language: 'en-US',
         page: String(pageNum)
