@@ -238,11 +238,6 @@ a {
   color: var(--accent-ink);
 }
 
-.toggle[aria-pressed="true"]::before {
-  content: "\2713";
-  margin-right: 6px;
-}
-
 #genreSelect {
   flex: 1 1 220px;
 }

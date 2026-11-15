@@ -135,6 +135,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function queueDirectLinks(root) {
     if (directLinksOff) return;
     root.querySelectorAll('.where-body[data-show-id]:not([data-queued])').forEach(el => {
+      if (el.closest('.card')?.hidden) return; // hidden cards are queued once they're shown again
       el.dataset.queued = '1';
       const show = showsById.get(el.dataset.showId);
       if (!show || !show.imdbId || !Array.isArray(show.streaming) || show.streaming.length === 0) return;
@@ -166,7 +167,7 @@ document.addEventListener('DOMContentLoaded', () => {
       : '<div class="poster-fallback">No poster</div>';
 
     return `
-      <article class="card">
+      <article class="card" data-type="${isSeries ? 'tv' : 'movie'}">
         <div class="poster">${posterHtml}</div>
         <div class="card-body">
           <h3 class="card-title">${escapeHtml(title)}${year ? ` <span class="year">(${escapeHtml(year)})</span>` : ''}</h3>
@@ -199,6 +200,55 @@ document.addEventListener('DOMContentLoaded', () => {
     if (overview) overview.classList.toggle('expanded');
   });
 
+  // ---------- Filtering results by Movies / TV Shows ----------
+  function summaryText(count, forText, note) {
+    return `${count} result${count === 1 ? '' : 's'} ${forText}${note}`;
+  }
+
+  function summaryHtml(count, forText, note = '') {
+    return `<p class="results-summary" data-for="${escapeHtml(forText)}" data-note="${escapeHtml(note)}">${escapeHtml(summaryText(count, forText, note))}</p>`;
+  }
+
+  function refreshSummary(container) {
+    const summary = container.querySelector('.results-summary');
+    if (!summary) return;
+    const total = container.querySelectorAll('.card').length;
+    const visible = container.querySelectorAll('.card:not([hidden])').length;
+    summary.textContent = total > 0 && visible === 0
+      ? 'Nothing matches the selected filters. Turn Movies or TV Shows back on to see more.'
+      : summaryText(visible, summary.dataset.for || '', summary.dataset.note || '');
+  }
+
+  // Cards that don't match the selected toggles are hidden right away, and brought back if the
+  // toggle is switched on again.
+  function applyTypeFilter() {
+    document.querySelectorAll('.card[data-type]').forEach(card => {
+      card.hidden = !selectedTypes[card.dataset.type];
+    });
+    [titleResults, genreResults].forEach(container => {
+      refreshSummary(container);
+      queueDirectLinks(container);
+    });
+  }
+
+  // A fetch of 'both' covers any selection; a fetch of one type only covers that type.
+  function covers(fetchedType, wantedType) {
+    return fetchedType === 'both' || fetchedType === wantedType;
+  }
+
+  // Narrowing the selection just hides cards. Widening it to a type that was never fetched (for
+  // example searching Movies only, then turning TV Shows on) fetches again so those titles appear.
+  function onTypesChanged() {
+    applyTypeFilter();
+    const wanted = currentType();
+    if (lastTitleQuery && titleFetchedType && !covers(titleFetchedType, wanted)) {
+      runTitleSearch(lastTitleQuery);
+    }
+    if (genreState.genre && genreState.type && !covers(genreState.type, wanted)) {
+      loadGenreResults(true, true);
+    }
+  }
+
   // ---------- Movies / TV Shows toggles ----------
   // Both are on by default. The Title and Genre tabs share one selection, and at least one
   // option always stays on.
@@ -223,6 +273,7 @@ document.addEventListener('DOMContentLoaded', () => {
       selectedTypes[type] = !selectedTypes[type];
       syncToggles();
       renderGenreOptions();
+      onTypesChanged();
     });
   });
 
@@ -252,16 +303,19 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // ---------- Title search ----------
-  titleForm.addEventListener('submit', async e => {
-    e.preventDefault();
-    const query = titleInput.value.trim();
-    if (!query) return;
+  let lastTitleQuery = '';
+  let titleFetchedType = null;
 
+  async function runTitleSearch(query) {
+    const type = currentType();
+    lastTitleQuery = query;
+    titleFetchedType = null;
     showLoading(titleResults);
     try {
-      const data = await apiGet({ action: 'search', query, type: currentType() });
+      const data = await apiGet({ action: 'search', query, type });
+      titleFetchedType = type;
       if (!Array.isArray(data) || data.length === 0) {
-        const hint = currentType() === 'both'
+        const hint = type === 'both'
           ? 'Check the spelling and try again.'
           : 'Check the spelling, or turn on both Movies and TV Shows to search everything.';
         showMessage(titleResults, `No results for "${query}"`, hint);
@@ -269,12 +323,19 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       titleResults.innerHTML =
-        `<p class="results-summary">${data.length} result${data.length === 1 ? '' : 's'} for "${escapeHtml(query)}"</p>` +
+        summaryHtml(data.length, `for "${query}"`) +
         `<div class="grid">${data.map(cardHtml).join('')}</div>`;
-      queueDirectLinks(titleResults);
+      applyTypeFilter();
     } catch (err) {
       showMessage(titleResults, 'Something went wrong', err.message, true);
     }
+  }
+
+  titleForm.addEventListener('submit', e => {
+    e.preventDefault();
+    const query = titleInput.value.trim();
+    if (!query) return;
+    runTitleSearch(query);
   });
 
   // ---------- Genre browse ----------
@@ -284,8 +345,7 @@ document.addEventListener('DOMContentLoaded', () => {
     label: '',
     page: 0,
     hasMore: false,
-    seen: new Set(),
-    count: 0
+    seen: new Set()
   };
 
   // The genre list comes from the API route once. It lists which of Movies / TV Shows each genre
@@ -317,15 +377,18 @@ document.addEventListener('DOMContentLoaded', () => {
     renderGenreOptions();
   }
 
-  async function loadGenreResults(reset) {
+  // reset starts a fresh list; refresh does the same for the genre already on screen (used when
+  // a toggle is switched on for a type the last fetch didn't include).
+  async function loadGenreResults(reset, refresh = false) {
     if (reset) {
-      genreState.genre = genreSelect.value;
+      if (!refresh) {
+        genreState.genre = genreSelect.value;
+        genreState.label = genreSelect.options[genreSelect.selectedIndex].textContent;
+      }
       genreState.type = currentType();
-      genreState.label = genreSelect.options[genreSelect.selectedIndex].textContent;
       genreState.page = 0;
       genreState.hasMore = false;
       genreState.seen = new Set();
-      genreState.count = 0;
       loadMoreBtn.hidden = true;
       showLoading(genreResults);
     } else {
@@ -349,7 +412,6 @@ document.addEventListener('DOMContentLoaded', () => {
         genreState.seen.add(show.id);
         return true;
       });
-      genreState.count += newShows.length;
 
       // Some genres only exist for one type (Horror is movies only, Reality is TV only), so say so.
       const used = Array.isArray(data.types) ? data.types : [];
@@ -357,16 +419,15 @@ document.addEventListener('DOMContentLoaded', () => {
       const only = used.length > 0 && used.length < wanted
         ? ` (${used[0] === 'movie' ? 'movies' : 'TV shows'} only)`
         : '';
-      const summary = `<p class="results-summary">${genreState.count} result${genreState.count === 1 ? '' : 's'} for ${escapeHtml(genreState.label)}${only}</p>`;
+      const summary = summaryHtml(newShows.length, `for ${genreState.label}`, only);
       const grid = newShows.map(cardHtml).join('');
       if (reset) {
         genreResults.innerHTML = summary + (grid ? `<div class="grid">${grid}</div>` : '<p class="message">No results found.</p>');
       } else if (grid) {
-        genreResults.querySelector('.results-summary').outerHTML = summary;
         genreResults.querySelector('.grid').insertAdjacentHTML('beforeend', grid);
       }
       loadMoreBtn.hidden = !genreState.hasMore;
-      queueDirectLinks(genreResults);
+      applyTypeFilter();
     } catch (err) {
       showMessage(genreResults, 'Something went wrong', err.message, true);
     } finally {
