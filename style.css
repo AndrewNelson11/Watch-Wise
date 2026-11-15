@@ -208,7 +208,8 @@ a {
 /* Movies / TV Shows toggles: same look as the tabs, but each one switches on and off */
 
 .type-toggle {
-  display: inline-flex;
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr; /* both buttons are the width of the wider one */
   flex: none;
   gap: 4px;
   height: 48px;
@@ -219,7 +220,7 @@ a {
 }
 
 .toggle {
-  padding: 0 16px;
+  padding: 8px 18px;
   border: 0;
   border-radius: 7px;
   background: transparent;

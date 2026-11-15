@@ -27,6 +27,7 @@ Two APIs split the work: TMDB handles search and popularity, and the Streaming A
 Other details worth noting:
 - Title search scores each match by how well known it is (vote count and popularity) plus a boost for exact title matches and for titles streamable in the US
 - Genre browse uses TMDB's discover endpoint sorted by popularity, with a minimum vote count so only well-known titles appear, and filtered to titles available in the US
+- TMDB only defines Horror, Thriller, Romance, History and Music as movie genres, so TV shows for those are matched through TMDB keywords of the same name
 - The function fetches details and streaming providers for each result in parallel, so the browser makes a single request
 - Results are HTML-escaped and links are validated before rendering
 - Handles rate limiting (429), rejected keys, empty results and network failures with friendly messages

@@ -9,8 +9,9 @@ const SEARCH_LIMIT = 12;
 
 const SA_HOST = 'streaming-availability.p.rapidapi.com';
 // Genres shown in the site's dropdown. TMDB uses different genre ids for movies and TV shows, so
-// each entry maps to the matching id for each (a pipe means "either of these"). A genre with no
-// entry for a type simply doesn't exist for that type.
+// each entry maps to the matching id for each (a pipe means "either of these"). Some genres only
+// exist for movies in TMDB (Horror, Thriller and so on) even though TV shows of that kind exist,
+// so those use tvKeyword: the TV side is matched on TMDB's keyword of that name instead.
 const GENRES = [
   { slug: 'action-adventure', name: 'Action & Adventure', movie: '28|12', tv: '10759' },
   { slug: 'animation', name: 'Animation', movie: '16', tv: '16' },
@@ -19,18 +20,48 @@ const GENRES = [
   { slug: 'documentary', name: 'Documentary', movie: '99', tv: '99' },
   { slug: 'drama', name: 'Drama', movie: '18', tv: '18' },
   { slug: 'family', name: 'Family', movie: '10751', tv: '10751' },
-  { slug: 'history', name: 'History', movie: '36' },
-  { slug: 'horror', name: 'Horror', movie: '27' },
-  { slug: 'kids', name: 'Kids', tv: '10762' },
-  { slug: 'music', name: 'Music', movie: '10402' },
+  { slug: 'history', name: 'History', movie: '36', tvKeyword: 'history' },
+  { slug: 'horror', name: 'Horror', movie: '27', tvKeyword: 'horror' },
+  { slug: 'kids', name: 'Kids', movie: '10751', tv: '10762' },
+  { slug: 'music', name: 'Music', movie: '10402', tvKeyword: 'music' },
   { slug: 'mystery', name: 'Mystery', movie: '9648', tv: '9648' },
   { slug: 'reality', name: 'Reality', tv: '10764' },
-  { slug: 'romance', name: 'Romance', movie: '10749' },
+  { slug: 'romance', name: 'Romance', movie: '10749', tvKeyword: 'romance' },
   { slug: 'sci-fi-fantasy', name: 'Sci-Fi & Fantasy', movie: '878|14', tv: '10765' },
-  { slug: 'thriller', name: 'Thriller', movie: '53' },
+  { slug: 'thriller', name: 'Thriller', movie: '53', tvKeyword: 'thriller' },
   { slug: 'war', name: 'War', movie: '10752', tv: '10768' },
   { slug: 'western', name: 'Western', movie: '37', tv: '37' }
 ];
+
+const keywordCache = new Map(); // keyword name -> { at, ids }
+
+// Looks up TMDB's id for a keyword such as "horror" (exact name matches only).
+async function keywordIds(name) {
+  const cached = keywordCache.get(name);
+  if (cached && Date.now() - cached.at < LINK_CACHE_MS) return cached.ids;
+  let ids = [];
+  try {
+    const data = await tmdb('/search/keyword', { query: name, page: '1' });
+    ids = (data.results || [])
+      .filter(k => String(k.name).toLowerCase() === name)
+      .slice(0, 3)
+      .map(k => String(k.id));
+  } catch {
+    return []; // not cached, so the next request tries again
+  }
+  keywordCache.set(name, { at: Date.now(), ids });
+  return ids;
+}
+
+// The discover filter for one genre and type, or null when that type has no match for it.
+async function genreFilter(entry, kind) {
+  if (entry[kind]) return { with_genres: entry[kind] };
+  if (kind === 'tv' && entry.tvKeyword) {
+    const ids = await keywordIds(entry.tvKeyword);
+    return ids.length ? { with_keywords: ids.join('|') } : null;
+  }
+  return null;
+}
 
 const LINK_CACHE_MS = 24 * 60 * 60 * 1000;
 const linkCache = new Map(); // imdbId -> { at, streaming } (reused while the function instance stays warm)
@@ -185,7 +216,7 @@ export default async function handler(request, response) {
       const list = GENRES.map(g => ({
         slug: g.slug,
         name: g.name,
-        types: ['movie', 'tv'].filter(t => g[t])
+        types: ['movie', 'tv'].filter(t => g[t] || (t === 'tv' && g.tvKeyword))
       }));
       response.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate');
       return response.status(200).json(list);
@@ -233,7 +264,9 @@ export default async function handler(request, response) {
       if (!entry) return response.status(400).json({ error: 'Unknown genre' });
 
       const wanted = type === 'both' ? ['movie', 'tv'] : [mediaType];
-      const kinds = wanted.filter(k => entry[k]);
+      const filters = await Promise.all(wanted.map(kind => genreFilter(entry, kind)));
+      const kinds = wanted.filter((kind, i) => filters[i]);
+      const kindFilters = filters.filter(Boolean);
       const pageNum = Math.max(1, Math.min(500, parseInt(page, 10) || 1));
       if (kinds.length === 0) {
         return response.status(200).json({ results: [], page: pageNum, hasMore: false, types: [] });
@@ -250,9 +283,9 @@ export default async function handler(request, response) {
       // way to watch (subscription, free, ads, rent or buy) are listed. To lean more trending, lower
       // the vote minimums; to lean more well known, raise them.
       const pages = await Promise.all(
-        kinds.map(kind =>
+        kinds.map((kind, i) =>
           tmdb(`/discover/${kind}`, {
-            with_genres: entry[kind],
+            ...kindFilters[i],
             sort_by: 'popularity.desc',
             'vote_count.gte': kind === 'movie' ? '500' : '250',
             watch_region: COUNTRY,
