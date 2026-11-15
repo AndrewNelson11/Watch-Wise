@@ -205,6 +205,44 @@ a {
   cursor: pointer;
 }
 
+/* Movies / TV Shows toggles: same look as the tabs, but each one switches on and off */
+
+.type-toggle {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+  height: 48px;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.toggle {
+  padding: 0 16px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font: 600 0.95rem var(--font-body);
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.toggle:hover {
+  color: var(--text);
+}
+
+.toggle[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.toggle[aria-pressed="true"]::before {
+  content: "\2713";
+  margin-right: 6px;
+}
+
 #genreSelect {
   flex: 1 1 220px;
 }
@@ -518,8 +556,13 @@ a {
     flex: 1 1 100%;
   }
 
-  .search-form select {
+  .search-form select,
+  .type-toggle {
     flex: 1 1 100%;
+  }
+
+  .toggle {
+    flex: 1;
   }
 }
 

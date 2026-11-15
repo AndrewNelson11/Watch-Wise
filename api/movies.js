@@ -1,4 +1,4 @@
-// Vercel serverless function: keeps API credentials on the server.
+// Vercel serverless function: keeps the API credentials out of the browser.
 // - TMDB_ACCESS_TOKEN (TMDB "API Read Access Token"): search, popularity, details
 // - RAPIDAPI_KEY (Streaming Availability API): direct links into each streaming service
 
@@ -8,6 +8,30 @@ const COUNTRY = 'US';
 const SEARCH_LIMIT = 12;
 
 const SA_HOST = 'streaming-availability.p.rapidapi.com';
+// Genres shown in the site's dropdown. TMDB uses different genre ids for movies and TV shows, so
+// each entry maps to the matching id for each (a pipe means "either of these"). A genre with no
+// entry for a type simply doesn't exist for that type.
+const GENRES = [
+  { slug: 'action-adventure', name: 'Action & Adventure', movie: '28|12', tv: '10759' },
+  { slug: 'animation', name: 'Animation', movie: '16', tv: '16' },
+  { slug: 'comedy', name: 'Comedy', movie: '35', tv: '35' },
+  { slug: 'crime', name: 'Crime', movie: '80', tv: '80' },
+  { slug: 'documentary', name: 'Documentary', movie: '99', tv: '99' },
+  { slug: 'drama', name: 'Drama', movie: '18', tv: '18' },
+  { slug: 'family', name: 'Family', movie: '10751', tv: '10751' },
+  { slug: 'history', name: 'History', movie: '36' },
+  { slug: 'horror', name: 'Horror', movie: '27' },
+  { slug: 'kids', name: 'Kids', tv: '10762' },
+  { slug: 'music', name: 'Music', movie: '10402' },
+  { slug: 'mystery', name: 'Mystery', movie: '9648', tv: '9648' },
+  { slug: 'reality', name: 'Reality', tv: '10764' },
+  { slug: 'romance', name: 'Romance', movie: '10749' },
+  { slug: 'sci-fi-fantasy', name: 'Sci-Fi & Fantasy', movie: '878|14', tv: '10765' },
+  { slug: 'thriller', name: 'Thriller', movie: '53' },
+  { slug: 'war', name: 'War', movie: '10752', tv: '10768' },
+  { slug: 'western', name: 'Western', movie: '37', tv: '37' }
+];
+
 const LINK_CACHE_MS = 24 * 60 * 60 * 1000;
 const linkCache = new Map(); // imdbId -> { at, streaming } (reused while the function instance stays warm)
 const SA_TYPE_ORDER = { subscription: 0, free: 1, addon: 2, rent: 3, buy: 4 };
@@ -153,14 +177,18 @@ export default async function handler(request, response) {
       return response.status(200).json({ streaming });
     }
 
-    if (!process.env.TMDB_ACCESS_TOKEN) {
+    if (action !== 'genres' && !process.env.TMDB_ACCESS_TOKEN) {
       return response.status(500).json({ error: 'Server is missing TMDB_ACCESS_TOKEN' });
     }
 
     if (action === 'genres') {
-      const data = await tmdb(`/genre/${mediaType}/list`, { language: 'en' });
+      const list = GENRES.map(g => ({
+        slug: g.slug,
+        name: g.name,
+        types: ['movie', 'tv'].filter(t => g[t])
+      }));
       response.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate');
-      return response.status(200).json(data.genres || []);
+      return response.status(200).json(list);
     }
 
     if (action === 'search') {
@@ -201,32 +229,58 @@ export default async function handler(request, response) {
     }
 
     if (action === 'browse') {
-      if (!/^\d+$/.test(String(genre))) return response.status(400).json({ error: 'Missing genre' });
+      const entry = GENRES.find(g => g.slug === genre);
+      if (!entry) return response.status(400).json({ error: 'Unknown genre' });
+
+      const wanted = type === 'both' ? ['movie', 'tv'] : [mediaType];
+      const kinds = wanted.filter(k => entry[k]);
       const pageNum = Math.max(1, Math.min(500, parseInt(page, 10) || 1));
+      if (kinds.length === 0) {
+        return response.status(200).json({ results: [], page: pageNum, hasMore: false, types: [] });
+      }
+
+      // With both types selected, each TMDB page is split in two halves (10 movies + 10 shows per
+      // page here) so a page of results stays the same size and uses the same number of lookups.
+      const split = kinds.length > 1;
+      const tmdbPage = split ? Math.ceil(pageNum / 2) : pageNum;
+      const secondHalf = split && pageNum % 2 === 0;
 
       // Trending and well known: sort by TMDB's popularity (what people are watching now) but only
       // include titles with plenty of votes, so obscure titles can't sneak in. Only titles with a US
       // way to watch (subscription, free, ads, rent or buy) are listed. To lean more trending, lower
       // the vote minimums; to lean more well known, raise them.
-      const data = await tmdb(`/discover/${mediaType}`, {
-        with_genres: genre,
-        sort_by: 'popularity.desc',
-        'vote_count.gte': mediaType === 'movie' ? '500' : '250',
-        watch_region: COUNTRY,
-        with_watch_monetization_types: 'flatrate|free|ads|rent|buy',
-        include_adult: 'false',
-        language: 'en-US',
-        page: String(pageNum)
-      });
+      const pages = await Promise.all(
+        kinds.map(kind =>
+          tmdb(`/discover/${kind}`, {
+            with_genres: entry[kind],
+            sort_by: 'popularity.desc',
+            'vote_count.gte': kind === 'movie' ? '500' : '250',
+            watch_region: COUNTRY,
+            with_watch_monetization_types: 'flatrate|free|ads|rent|buy',
+            include_adult: 'false',
+            language: 'en-US',
+            page: String(tmdbPage)
+          })
+        )
+      );
 
-      const items = (data.results || []).map(r => ({ ...r, mediaType }));
+      let hasMore = false;
+      const items = [];
+      pages.forEach((data, i) => {
+        const kind = kinds[i];
+        const list = data.results || [];
+        const totalPages = Math.min(data.total_pages || 1, 500);
+        const shown = split ? (secondHalf ? list.slice(10) : list.slice(0, 10)) : list;
+        if (split ? (!secondHalf && list.length > 10) || tmdbPage < totalPages : tmdbPage < totalPages) {
+          hasMore = true;
+        }
+        shown.forEach(r => items.push({ ...r, mediaType: kind }));
+      });
+      items.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+
       const results = await withDetails(items);
       response.setHeader('Cache-Control', 's-maxage=600, stale-while-revalidate');
-      return response.status(200).json({
-        results,
-        page: data.page || pageNum,
-        hasMore: (data.page || pageNum) < Math.min(data.total_pages || 1, 500)
-      });
+      return response.status(200).json({ results, page: pageNum, hasMore, types: kinds });
     }
 
     return response.status(400).json({ error: 'Unknown action' });

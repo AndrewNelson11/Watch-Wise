@@ -1,13 +1,13 @@
 # Watchwise
 
-Find what to watch, and where to stream it. Search any movie or show by title, or browse by genre, and see each title's year, rating, runtime, description and the US streaming services that carry it.
+Find what to watch, and where to stream it. Search movies and TV shows by title, or browse by genre, and see each title's year, rating, runtime, description and the US streaming services that carry it.
 
-**Live demo:** [https://watch-wise-gamma.vercel.app/](https://watch-wise-gamma.vercel.app)
+**Live demo:** [watch-wise-gamma.vercel.app](https://watch-wise-gamma.vercel.app)
 
 ![Watchwise screenshot](screenshot.png)
 
 ## Features
-- Search movies and shows by title
+- Search movies and TV shows together by default, or switch to just one with the Movies / TV Shows toggles
 - Browse by genre: trending, well-known titles that are streamable in the US, with Load more pagination
 - Direct links into each streaming service for every way to watch (subscription and free first, rent/buy last)
 - Responsive layout, keyboard-accessible tabs, loading and error states

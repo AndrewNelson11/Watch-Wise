@@ -5,17 +5,16 @@ document.addEventListener('DOMContentLoaded', () => {
   const panels = document.querySelectorAll('[data-panel]');
   const titleForm = document.getElementById('titleForm');
   const titleInput = document.getElementById('titleInput');
-  const titleType = document.getElementById('titleType');
   const titleResults = document.getElementById('titleResults');
   const genreForm = document.getElementById('genreForm');
   const genreSelect = document.getElementById('genreSelect');
-  const genreType = document.getElementById('genreType');
   const genreResults = document.getElementById('genreResults');
   const loadMoreBtn = document.getElementById('loadMoreBtn');
+  const toggles = document.querySelectorAll('.toggle');
 
   // ---------- Helpers ----------
   async function apiGet(params) {
-    // All requests go to our own serverless function, which holds the TMDB token.
+    // Every request goes to the serverless function at /api/movies, which holds the API keys.
     const url = new URL('/api/movies', window.location.origin);
     Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
 
@@ -174,7 +173,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <p class="meta">
             <span class="rating">${rating}</span>
             ${length ? `<span>${escapeHtml(length)}</span>` : ''}
-            <span>${isSeries ? 'Show' : 'Movie'}</span>
+            <span>${isSeries ? 'TV Show' : 'Movie'}</span>
           </p>
           <p class="overview" title="Click to read more">${escapeHtml(show.overview || 'No description available.')}</p>
           <div class="where">
@@ -198,6 +197,33 @@ document.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('click', e => {
     const overview = e.target.closest('.overview');
     if (overview) overview.classList.toggle('expanded');
+  });
+
+  // ---------- Movies / TV Shows toggles ----------
+  // Both are on by default. The Title and Genre tabs share one selection, and at least one
+  // option always stays on.
+  const selectedTypes = { movie: true, tv: true };
+
+  function currentType() {
+    if (selectedTypes.movie && selectedTypes.tv) return 'both';
+    return selectedTypes.movie ? 'movie' : 'series';
+  }
+
+  function syncToggles() {
+    toggles.forEach(btn => {
+      btn.setAttribute('aria-pressed', String(selectedTypes[btn.dataset.type]));
+    });
+  }
+
+  toggles.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const type = btn.dataset.type;
+      const others = Object.keys(selectedTypes).filter(t => t !== type);
+      if (selectedTypes[type] && !others.some(t => selectedTypes[t])) return; // keep one on
+      selectedTypes[type] = !selectedTypes[type];
+      syncToggles();
+      renderGenreOptions();
+    });
   });
 
   // ---------- Tabs ----------
@@ -233,9 +259,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     showLoading(titleResults);
     try {
-      const data = await apiGet({ action: 'search', query, type: titleType.value });
+      const data = await apiGet({ action: 'search', query, type: currentType() });
       if (!Array.isArray(data) || data.length === 0) {
-        showMessage(titleResults, `No results for "${query}"`, 'Check the spelling, or switch the type to "Movies and shows" to search both.');
+        const hint = currentType() === 'both'
+          ? 'Check the spelling and try again.'
+          : 'Check the spelling, or turn on both Movies and TV Shows to search everything.';
+        showMessage(titleResults, `No results for "${query}"`, hint);
         return;
       }
 
@@ -259,28 +288,39 @@ document.addEventListener('DOMContentLoaded', () => {
     count: 0
   };
 
-  // Movie and show genres have different ids in TMDB, so reload the list when the type changes.
-  async function loadGenres() {
+  // The genre list comes from the API route once. It lists which of Movies / TV Shows each genre
+  // exists for, so the dropdown only offers genres that fit the current toggles.
+  let allGenres = [];
+
+  function renderGenreOptions() {
+    const previous = genreSelect.value;
     genreSelect.innerHTML = '<option value="">Choose a genre</option>';
-    let genres;
+    allGenres
+      .filter(genre => genre.types.some(type => selectedTypes[type]))
+      .forEach(genre => {
+        const option = document.createElement('option');
+        option.value = genre.slug;
+        option.textContent = genre.name;
+        genreSelect.appendChild(option);
+      });
+    genreSelect.value = previous;
+    if (genreSelect.value !== previous) genreSelect.value = '';
+  }
+
+  async function loadGenres() {
     try {
-      genres = await apiGet({ action: 'genres', type: genreType.value });
+      allGenres = await apiGet({ action: 'genres' });
     } catch {
       genreSelect.innerHTML = '<option value="">Genres unavailable</option>';
       return;
     }
-    genres.forEach(genre => {
-      const option = document.createElement('option');
-      option.value = genre.id;
-      option.textContent = genre.name;
-      genreSelect.appendChild(option);
-    });
+    renderGenreOptions();
   }
 
   async function loadGenreResults(reset) {
     if (reset) {
       genreState.genre = genreSelect.value;
-      genreState.type = genreType.value;
+      genreState.type = currentType();
       genreState.label = genreSelect.options[genreSelect.selectedIndex].textContent;
       genreState.page = 0;
       genreState.hasMore = false;
@@ -311,7 +351,13 @@ document.addEventListener('DOMContentLoaded', () => {
       });
       genreState.count += newShows.length;
 
-      const summary = `<p class="results-summary">${genreState.count} result${genreState.count === 1 ? '' : 's'} for ${escapeHtml(genreState.label)}, trending and well known</p>`;
+      // Some genres only exist for one type (Horror is movies only, Reality is TV only), so say so.
+      const used = Array.isArray(data.types) ? data.types : [];
+      const wanted = genreState.type === 'both' ? 2 : 1;
+      const only = used.length > 0 && used.length < wanted
+        ? ` (${used[0] === 'movie' ? 'movies' : 'TV shows'} only)`
+        : '';
+      const summary = `<p class="results-summary">${genreState.count} result${genreState.count === 1 ? '' : 's'} for ${escapeHtml(genreState.label)}${only}</p>`;
       const grid = newShows.map(cardHtml).join('');
       if (reset) {
         genreResults.innerHTML = summary + (grid ? `<div class="grid">${grid}</div>` : '<p class="message">No results found.</p>');
@@ -334,7 +380,6 @@ document.addEventListener('DOMContentLoaded', () => {
     loadGenreResults(true);
   });
 
-  genreType.addEventListener('change', loadGenres);
   loadMoreBtn.addEventListener('click', () => loadGenreResults(false));
   loadGenres();
 });

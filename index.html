@@ -39,12 +39,10 @@
         <form id="titleForm" class="search-form">
           <label class="sr-only" for="titleInput">Movie or show title</label>
           <input type="text" id="titleInput" placeholder="Search a movie or show title" autocomplete="off" required />
-          <label class="sr-only" for="titleType">Type</label>
-          <select id="titleType">
-            <option value="movie">Movies</option>
-            <option value="series">Shows</option>
-            <option value="both">Movies and shows</option>
-          </select>
+          <div class="type-toggle" role="group" aria-label="Include in results">
+            <button type="button" class="toggle" data-type="movie" aria-pressed="true">Movies</button>
+            <button type="button" class="toggle" data-type="tv" aria-pressed="true">TV Shows</button>
+          </div>
           <button type="submit" class="btn-primary">Search</button>
         </form>
       </div>
@@ -55,11 +53,10 @@
           <select id="genreSelect" required>
             <option value="">Choose a genre</option>
           </select>
-          <label class="sr-only" for="genreType">Type</label>
-          <select id="genreType">
-            <option value="movie">Movies</option>
-            <option value="series">Shows</option>
-          </select>
+          <div class="type-toggle" role="group" aria-label="Include in results">
+            <button type="button" class="toggle" data-type="movie" aria-pressed="true">Movies</button>
+            <button type="button" class="toggle" data-type="tv" aria-pressed="true">TV Shows</button>
+          </div>
           <button type="submit" class="btn-primary">Browse</button>
         </form>
       </div>
