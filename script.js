@@ -176,7 +176,10 @@ document.addEventListener('DOMContentLoaded', () => {
             ${length ? `<span>${escapeHtml(length)}</span>` : ''}
             <span>${isSeries ? 'TV Show' : 'Movie'}</span>
           </p>
-          <p class="overview" title="Click to read more">${escapeHtml(show.overview || 'No description available.')}</p>
+          <div class="overview-wrap">
+            <p class="overview">${escapeHtml(show.overview || 'No description available.')}</p>
+            <button type="button" class="more-link" aria-expanded="false" hidden>Read more</button>
+          </div>
           <div class="where">
             <span class="where-label">Where to watch</span>
             <div class="where-body" data-show-id="${escapeHtml(show.id)}">${whereToWatchHtml(show)}</div>
@@ -195,10 +198,38 @@ document.addEventListener('DOMContentLoaded', () => {
     container.innerHTML = `<div class="message${isError ? ' error' : ''}"><h3>${escapeHtml(heading)}</h3><p>${escapeHtml(body)}</p></div>`;
   }
 
+  // "Read more" only shows when a description is actually cut off, which depends on the card width,
+  // so it is re-checked after results render, when the window resizes and when cards are shown again.
+  function updateOverviewToggles(root = document) {
+    root.querySelectorAll('.overview-wrap').forEach(wrap => {
+      const text = wrap.querySelector('.overview');
+      const button = wrap.querySelector('.more-link');
+      if (text.classList.contains('expanded')) {
+        button.hidden = false;
+        return;
+      }
+      if (wrap.closest('.card')?.hidden) return;
+      button.hidden = text.scrollHeight <= text.clientHeight + 1;
+    });
+  }
+
   document.addEventListener('click', e => {
-    const overview = e.target.closest('.overview');
-    if (overview) overview.classList.toggle('expanded');
+    const button = e.target.closest('.more-link');
+    if (!button) return;
+    const text = button.closest('.overview-wrap').querySelector('.overview');
+    const expanded = text.classList.toggle('expanded');
+    button.setAttribute('aria-expanded', String(expanded));
+    button.textContent = expanded ? 'Show less' : 'Read more';
   });
+
+  let resizeTimer;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => updateOverviewToggles(), 150);
+  });
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => updateOverviewToggles());
+  }
 
   // ---------- Filtering results by Movies / TV Shows ----------
   function summaryText(count, forText, note) {
@@ -227,6 +258,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     [titleResults, genreResults].forEach(container => {
       refreshSummary(container);
+      updateOverviewToggles(container);
       queueDirectLinks(container);
     });
   }
@@ -290,6 +322,7 @@ document.addEventListener('DOMContentLoaded', () => {
       section.hidden = section.dataset.results !== name || !hasContent;
     });
     loadMoreBtn.hidden = !(name === 'genre' && genreState.hasMore);
+    updateOverviewToggles();
   }
 
   tabs.forEach((tab, index) => {

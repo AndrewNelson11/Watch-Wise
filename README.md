@@ -10,7 +10,8 @@ Find what to watch, and where to stream it. Search movies and TV shows by title,
 - Search movies and TV shows together by default, or switch to just one with the Movies / TV Shows toggles
 - Browse by genre: trending, well-known titles that are streamable in the US, with Load more pagination
 - Direct links into each streaming service for every way to watch (subscription and free first, rent/buy last)
-- Responsive layout, keyboard-accessible tabs, loading and error states
+- Compact, responsive layout: two columns of results, three on wide screens, with a "Read more" control on long descriptions
+- Keyboard-accessible tabs and toggles, loading and error states
 
 ## Tech stack
 - HTML, CSS and vanilla JavaScript (no framework, no build step)

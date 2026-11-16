@@ -122,22 +122,32 @@ a {
   line-height: 1.3;
 }
 
-/* Hero */
+/* Search note */
 
-.hero {
-  padding: 20px 0 16px;
+.search-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 24px;
+  margin-bottom: 14px;
 }
 
-.hero p {
+.search-note {
+  flex: 1 1 100%;
   margin: 0;
-  max-width: 64ch;
+  padding-top: 12px;
   color: var(--muted);
-  font-size: 1rem;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  text-align: left;
+  white-space: nowrap;
 }
 
 /* Search card */
 
 .search-card {
+  margin-top: 16px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -148,7 +158,6 @@ a {
   display: inline-flex;
   gap: 4px;
   padding: 4px;
-  margin-bottom: 14px;
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -299,7 +308,7 @@ a {
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 470px), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 400px), 1fr));
   gap: 16px;
 }
 
@@ -371,23 +380,60 @@ a {
   font-weight: 600;
 }
 
+.overview-wrap {
+  margin: 10px 0 14px;
+}
+
 .overview {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
   line-clamp: 3;
   overflow: hidden;
-  margin: 10px 0 14px;
+  margin: 0;
   color: var(--text-soft);
   font-size: 0.92rem;
   line-height: 1.5;
-  cursor: pointer;
 }
 
 .overview.expanded {
   -webkit-line-clamp: unset;
   line-clamp: unset;
   display: block;
+}
+
+/* "Read more" appears only when the description is actually cut off */
+
+.more-link {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 4px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: 600 0.82rem var(--font-body);
+  cursor: pointer;
+}
+
+.more-link::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin-left: 7px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 0.15s;
+}
+
+.more-link[aria-expanded="true"]::after {
+  transform: translateY(2px) rotate(-135deg);
+}
+
+.more-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .where {
@@ -524,11 +570,13 @@ a {
 
 /* Small screens */
 
-@media (max-width: 520px) {
-  .hero {
-    padding-top: 16px;
+@media (max-width: 700px) {
+  .search-note {
+    white-space: normal;
   }
+}
 
+@media (max-width: 520px) {
   .brand-name {
     font-size: 1.6rem;
   }
@@ -562,12 +610,85 @@ a {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .spinner {
-    animation-duration: 2.4s;
+/* Larger screens: tighter spacing so more results fit on screen */
+
+@media (min-width: 521px) {
+  .header-inner {
+    padding-top: 10px;
+    padding-bottom: 10px;
   }
 
-  * {
-    transition: none !important;
+  .brand img {
+    width: 40px;
+    height: 40px;
   }
+
+  .brand-name {
+    font-size: 1.75rem;
+  }
+
+  .search-card {
+    margin-top: 18px;
+    padding: 14px 16px;
+  }
+
+  .search-head {
+    margin-bottom: 12px;
+  }
+
+  .search-form input,
+  .search-form select,
+  .btn-primary,
+  .type-toggle {
+height: 44px;
+}
+.results {
+margin-top: 20px;
+}
+.results-summary {
+margin-bottom: 12px;
+}
+.grid {
+gap: 14px;
+}
+.card {
+gap: 14px;
+padding: 12px;
+}
+.poster {
+width: 84px;
+}
+.card-title {
+font-size: 1.05rem;
+}
+.overview-wrap {
+margin: 8px 0 10px;
+}
+.overview {
+-webkit-line-clamp: 2;
+line-clamp: 2;
+}
+.where {
+display: flex;
+flex-wrap: wrap;
+align-items: center;
+gap: 6px 10px;
+}
+.where-label {
+margin-bottom: 0;
+}
+}
+/* Wide screens: a wider page with three columns of results */
+@media (min-width: 1320px) {
+.wrap {
+max-width: 1280px;
+}
+}
+@media (prefers-reduced-motion: reduce) {
+.spinner {
+animation-duration: 2.4s;
+}
+• {
+transition: none !important;
+}
 }

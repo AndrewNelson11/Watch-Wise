@@ -25,14 +25,16 @@
   </header>
 
   <main class="wrap">
-    <section class="hero">
-      <p>Search by title or browse by genre to see each title's year, rating, runtime and description, plus where it's streaming in the US.</p>
-    </section>
+    <h1 class="sr-only">Watchwise: find where to stream movies and shows</h1>
+
+   <p class="search-note">Find where any movie or show is streaming in the US, plus ratings, runtimes and details.</p>
 
     <section class="search-card" aria-label="Search">
-      <div class="tabs" role="tablist" aria-label="Search mode">
-        <button class="tab" role="tab" id="tab-title" data-tab="title" aria-selected="true" aria-controls="panel-title">By Title</button>
-        <button class="tab" role="tab" id="tab-genre" data-tab="genre" aria-selected="false" aria-controls="panel-genre" tabindex="-1">By Genre</button>
+      <div class="search-head" style="display: flex; flex-direction: column; align-items: flex-start; gap: 12px;">
+        <div class="tabs" role="tablist" aria-label="Search mode">
+          <button class="tab" role="tab" id="tab-title" data-tab="title" aria-selected="true" aria-controls="panel-title">By Title</button>
+          <button class="tab" role="tab" id="tab-genre" data-tab="genre" aria-selected="false" aria-controls="panel-genre" tabindex="-1">By Genre</button>
+        </div>
       </div>
 
       <div id="panel-title" role="tabpanel" aria-labelledby="tab-title" data-panel="title">
